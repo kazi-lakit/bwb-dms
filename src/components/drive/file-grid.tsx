@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MoreVertical, Download, FolderInput, Copy, RotateCcw, Share2, Trash2, XCircle } from "lucide-react";
+import { MoreVertical, Download, Eye, FolderInput, Copy, History, Pencil, RotateCcw, Share2, Trash2, XCircle } from "lucide-react";
 import type { DirectoryChild } from "@/lib/blocks/files";
 import { formatBytes, formatDate } from "@/lib/format";
 import { EntryIcon } from "./file-icon";
@@ -10,8 +10,13 @@ interface FileGridProps {
   entries: DirectoryChild[];
   onOpenFolder: (entry: DirectoryChild) => void;
   onDownload: (entry: DirectoryChild) => void;
+  /** Files only — folders have no content to render a preview for. */
+  onPreview?: (entry: DirectoryChild) => void;
+  /** Files only — versioning is a file-level concept. */
+  onVersions?: (entry: DirectoryChild) => void;
   /** Omit any of these to render a read-only-ish grid — e.g. content shared with you, where you may not hold Manage. */
   onShare?: (entry: DirectoryChild) => void;
+  onRename?: (entry: DirectoryChild) => void;
   onMove?: (entry: DirectoryChild) => void;
   /** Files only — there's no CopyDirectory endpoint, so this is never offered for folders. */
   onCopy?: (entry: DirectoryChild) => void;
@@ -26,7 +31,10 @@ export function FileGrid({
   entries,
   onOpenFolder,
   onDownload,
+  onPreview,
+  onVersions,
   onShare,
+  onRename,
   onMove,
   onCopy,
   onDelete,
@@ -35,8 +43,9 @@ export function FileGrid({
 }: FileGridProps) {
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
-  function openOrDownload(entry: DirectoryChild) {
+  function openEntry(entry: DirectoryChild) {
     if (entry.isFolder) onOpenFolder(entry);
+    else if (onPreview) onPreview(entry);
     else onDownload(entry);
   }
 
@@ -56,17 +65,17 @@ export function FileGrid({
           key={entry.id}
           role="button"
           tabIndex={0}
-          onClick={() => openOrDownload(entry)}
+          onClick={() => openEntry(entry)}
           onKeyDown={(e) => {
             if (e.key !== "Enter" && e.key !== " ") return;
             e.preventDefault();
-            openOrDownload(entry);
+            openEntry(entry);
           }}
           className="group relative flex flex-col gap-2 rounded-lg border border-hairline bg-canvas p-3.5 hover:border-stone hover:shadow-sm"
         >
           <div className="flex items-start justify-between">
             <EntryIcon isFolder={entry.isFolder} name={entry.name} className="h-8 w-8 text-steel" />
-            {(!entry.isFolder || onShare || onMove || onDelete || onRestore || onPurge) && (
+            {(!entry.isFolder || onShare || onRename || onMove || onDelete || onRestore || onPurge) && (
               // Stops every click inside — the toggle button and each menu item — from
               // bubbling up to the tile's own onClick above (which would otherwise also
               // fire open/download at the same time as, say, Delete).
@@ -82,6 +91,17 @@ export function FileGrid({
                     onMouseLeave={() => setMenuFor(null)}
                     className="absolute right-0 top-8 z-10 w-40 rounded-md border border-hairline bg-canvas p-1 shadow-lg"
                   >
+                    {!entry.isFolder && onPreview && (
+                      <button
+                        onClick={() => {
+                          setMenuFor(null);
+                          onPreview(entry);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm text-ink hover:bg-surface"
+                      >
+                        <Eye size={14} /> Preview
+                      </button>
+                    )}
                     {!entry.isFolder && (
                       <button
                         onClick={() => {
@@ -91,6 +111,28 @@ export function FileGrid({
                         className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm text-ink hover:bg-surface"
                       >
                         <Download size={14} /> Download
+                      </button>
+                    )}
+                    {!entry.isFolder && onVersions && (
+                      <button
+                        onClick={() => {
+                          setMenuFor(null);
+                          onVersions(entry);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm text-ink hover:bg-surface"
+                      >
+                        <History size={14} /> Version history
+                      </button>
+                    )}
+                    {onRename && (
+                      <button
+                        onClick={() => {
+                          setMenuFor(null);
+                          onRename(entry);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm text-ink hover:bg-surface"
+                      >
+                        <Pencil size={14} /> Rename
                       </button>
                     )}
                     {onShare && (

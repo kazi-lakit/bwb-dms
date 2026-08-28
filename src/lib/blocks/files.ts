@@ -20,6 +20,13 @@ export interface PresignResponse {
   fileId?: string;
 }
 
+// DomainService.Storage.FileMetaDataResponse — one metadata entry as it comes back from
+// get-file. `type` is a free-form, unvalidated label (this app always writes "String").
+export interface FileMetaDataEntry {
+  type?: string;
+  value?: string;
+}
+
 // DomainService.Storage.FileResponse
 export interface FileRecord {
   itemId?: string;
@@ -27,7 +34,42 @@ export interface FileRecord {
   url?: string;
   sizeInBytes?: number;
   createDate?: string;
+  createdBy?: string;
   parentDirectoryID?: string;
+  systemName?: string;
+  typeString?: string;
+  accessModifier?: "Public" | "Private";
+  tags?: string[];
+  metaData?: Record<string, FileMetaDataEntry>;
+}
+
+/**
+ * `GetPreSignedUrlForUploadRequest.metaData` is a plain string on the wire — the server
+ * JSON-parses it into `Dictionary<string, MetaValue>` using case-sensitive default options
+ * (confirmed against Storage.DomainService's `FileManagementService.CreateNewFileAsync`,
+ * which calls `JsonSerializer.Deserialize` with no naming policy), so the inner keys must be
+ * `Type`/`Value` (PascalCase) even though every other field on this app's wire format is
+ * camelCase. Getting this wrong doesn't error — it just silently deserializes to nulls.
+ */
+function buildMetaDataPayload(metadata?: Record<string, string>): string {
+  if (!metadata || Object.keys(metadata).length === 0) return "{}";
+  const entries = Object.fromEntries(
+    Object.entries(metadata).map(([key, value]) => [key, { Type: "String", Value: value }])
+  );
+  return JSON.stringify(entries);
+}
+
+/**
+ * Metadata pulled straight off the browser `File` object — no user input involved.
+ * `lastModified` is the OS-reported mtime, not upload time (that's `createDate` on the
+ * resulting FileRecord already).
+ */
+export function fileIntrinsicMetadata(file: File): Record<string, string> {
+  return {
+    originalName: file.name,
+    mimeType: file.type || "application/octet-stream",
+    lastModified: new Date(file.lastModified).toISOString(),
+  };
 }
 
 /**
@@ -50,6 +92,23 @@ interface DirectoryChildrenPage {
   nextCursor?: string;
 }
 
+// DomainService.Storage.Dms.FileVersionDto, from GetFileVersions — confirmed against the
+// Storage.DomainService source (FileVersionDto in DmsObjectResponses.cs), since the swagger
+// doc leaves this endpoint's response schema undeclared like get-objects above.
+export interface FileVersion {
+  itemId: string;
+  no: number;
+  sizeInBytes: number;
+  uploadedBy?: string;
+  createdDate?: string;
+}
+
+interface FileVersionsPage {
+  items: FileVersion[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
 function providerHeaders(uploadUrl: string, contentType: string): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": contentType || "application/octet-stream" };
   if (/\.blob\.core\.windows\.net/i.test(uploadUrl)) {
@@ -60,7 +119,12 @@ function providerHeaders(uploadUrl: string, contentType: string): Record<string,
 
 export const filesApi = {
   // POST /files/get-pre-signed-url-for-upload — DomainService.Storage.GetPreSignedUrlForUploadRequest
-  presign: (name: string, parentDirectoryId = "", accessModifier: "Public" | "Private" = "Private") =>
+  presign: (
+    name: string,
+    parentDirectoryId = "",
+    accessModifier: "Public" | "Private" = "Private",
+    metadata?: Record<string, string>
+  ) =>
     blocksFilesFetch<PresignResponse>(`/files/get-pre-signed-url-for-upload`, {
       method: "POST",
       body: JSON.stringify({
@@ -70,13 +134,13 @@ export const filesApi = {
         configurationName: "Default",
         moduleName: 3,
         tags: "",
-        metaData: "{}",
+        metaData: buildMetaDataPayload(metadata),
       }),
     }),
 
   /** Presign, then PUT the raw bytes straight to storage. No application-server upload step. */
-  upload: async (file: File, parentDirectoryId = ""): Promise<FileRecord> => {
-    const { uploadUrl, fileId } = await filesApi.presign(file.name, parentDirectoryId);
+  upload: async (file: File, parentDirectoryId = "", metadata?: Record<string, string>): Promise<FileRecord> => {
+    const { uploadUrl, fileId } = await filesApi.presign(file.name, parentDirectoryId, "Private", metadata);
     if (!uploadUrl || !fileId) throw new Error("Presign failed — no uploadUrl/fileId returned");
 
     const put = await fetch(uploadUrl, {
@@ -89,10 +153,22 @@ export const filesApi = {
     return filesApi.get(fileId);
   },
 
-  // GET /files/get-file?FileId=&ConfigurationName=&Version=
-  get: (fileId: string, configurationName = "Default") => {
+  // GET /files/get-file?FileId=&ConfigurationName=&Version= — omit `version` for the
+  // current version; pass a version's `no` (from getVersions) to fetch an older one.
+  get: (fileId: string, configurationName = "Default", version?: number) => {
     const params = new URLSearchParams({ FileId: fileId, ConfigurationName: configurationName });
+    if (version !== undefined) params.set("Version", String(version));
     return blocksFilesFetch<FileRecord>(`/files/get-file?${params.toString()}`);
+  },
+
+  // GET /files/get-file-versions?FileId=&Cursor=&Limit= — newest first.
+  getVersions: (fileId: string, opts: { cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams({ FileId: fileId });
+    if (opts.cursor) params.set("Cursor", opts.cursor);
+    params.set("Limit", String(opts.limit ?? 25));
+    return blocksFilesFetch<{ items?: FileVersion[]; nextCursor?: string; hasMore?: boolean }>(
+      `/files/get-file-versions?${params.toString()}`
+    );
   },
 
   // POST /files/get-files — DomainService.Storage.GetFilesRequest
@@ -121,6 +197,14 @@ export const filesApi = {
     blocksFilesFetch<{ isSuccess?: boolean }>(`/files/copy-file`, {
       method: "POST",
       body: JSON.stringify({ fileId, targetDirectoryId, copyAccessPolicies }),
+    }),
+
+  // POST /files/rename-file — DomainService.Storage.Dms.RenameFileRequest. Keeps the file
+  // in place and preserves its stored bytes/versions; only the name changes.
+  renameFile: (fileId: string, name: string) =>
+    blocksFilesFetch<{ isSuccess?: boolean }>(`/files/rename-file`, {
+      method: "POST",
+      body: JSON.stringify({ fileId, name }),
     }),
 };
 
@@ -178,6 +262,14 @@ export const directoryApi = {
       method: "POST",
       body: JSON.stringify({ directoryId, targetDirectoryId }),
     }),
+
+  // POST /directory/update-directory — DomainService.Storage.Dms.UpdateDirectoryRequest. Also
+  // accepts `description`, but renaming is the only thing this app's UI exposes.
+  renameDirectory: (directoryId: string, name: string) =>
+    blocksFilesFetch<{ isSuccess?: boolean }>(`/directory/update-directory`, {
+      method: "POST",
+      body: JSON.stringify({ directoryId, name }),
+    }),
 };
 
 /**
@@ -234,6 +326,15 @@ export function normalizeDirectoryChildren(raw: unknown): DirectoryChildrenPage 
   }
 
   return { entries: list.map(parseDirectoryChildEntry), nextCursor: extractNextCursor(raw) };
+}
+
+/**
+ * Unlike `get-objects`, `get-file-versions`' shape is confirmed from the
+ * Storage.DomainService source (`FileVersionsResponse`/`FileVersionDto`), so this just
+ * guards against a missing `items` array rather than trying several shapes.
+ */
+export function normalizeFileVersions(raw: { items?: FileVersion[]; nextCursor?: string; hasMore?: boolean }): FileVersionsPage {
+  return { items: raw.items ?? [], nextCursor: raw.nextCursor, hasMore: raw.hasMore ?? false };
 }
 
 /**

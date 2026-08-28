@@ -4,19 +4,23 @@ import { useRef, useState } from "react";
 import { FolderPlus, Search, Upload as UploadIcon } from "lucide-react";
 import { Breadcrumbs, type Crumb } from "@/components/drive/breadcrumbs";
 import { DestinationPickerDialog } from "@/components/drive/destination-picker-dialog";
+import { FilePreviewDialog } from "@/components/drive/file-preview-dialog";
+import { FileVersionsDialog } from "@/components/drive/file-versions-dialog";
 import { FileGrid } from "@/components/drive/file-grid";
 import { NewFolderDialog } from "@/components/drive/new-folder-dialog";
+import { RenameDialog } from "@/components/drive/rename-dialog";
 import { ShareDialog } from "@/components/drive/share-dialog";
 import { UploadDropzone } from "@/components/drive/upload-dropzone";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { filesApi, type DirectoryChild } from "@/lib/blocks/files";
+import { fileIntrinsicMetadata, filesApi, type DirectoryChild } from "@/lib/blocks/files";
 import {
   useCopyFile,
   useCreateDirectory,
   useDeleteEntry,
   useDirectoryChildren,
   useMoveEntry,
+  useRenameEntry,
   useUploadFile,
 } from "@/lib/blocks/drive-hooks";
 import { useDrive } from "@/components/providers/drive-provider";
@@ -27,6 +31,9 @@ export default function DrivePage() {
   const [search, setSearch] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [shareTarget, setShareTarget] = useState<DirectoryChild | null>(null);
+  const [renameTarget, setRenameTarget] = useState<DirectoryChild | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<DirectoryChild | null>(null);
+  const [versionsTarget, setVersionsTarget] = useState<DirectoryChild | null>(null);
   const [transferTarget, setTransferTarget] = useState<{ entry: DirectoryChild; mode: "move" | "copy" } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -42,6 +49,7 @@ export default function DrivePage() {
   const deleteEntry = useDeleteEntry(currentFolderId);
   const moveEntry = useMoveEntry(currentFolderId);
   const copyFile = useCopyFile();
+  const renameEntry = useRenameEntry(currentFolderId);
 
   function openFolder(entry: DirectoryChild) {
     setSearch("");
@@ -59,7 +67,7 @@ export default function DrivePage() {
   }
 
   function uploadFiles(files: File[]) {
-    files.forEach((file) => upload.mutate(file));
+    files.forEach((file) => upload.mutate({ file, metadata: fileIntrinsicMetadata(file) }));
   }
 
   return (
@@ -114,10 +122,35 @@ export default function DrivePage() {
           entries={entries ?? []}
           onOpenFolder={openFolder}
           onDownload={downloadEntry}
+          onPreview={setPreviewTarget}
+          onVersions={setVersionsTarget}
           onShare={setShareTarget}
+          onRename={setRenameTarget}
           onMove={(entry) => setTransferTarget({ entry, mode: "move" })}
           onCopy={(entry) => setTransferTarget({ entry, mode: "copy" })}
           onDelete={(e) => deleteEntry.mutate(e)}
+        />
+      )}
+
+      {previewTarget && (
+        <FilePreviewDialog key={previewTarget.id} entry={previewTarget} onClose={() => setPreviewTarget(null)} />
+      )}
+
+      {versionsTarget && (
+        <FileVersionsDialog key={versionsTarget.id} entry={versionsTarget} onClose={() => setVersionsTarget(null)} />
+      )}
+
+      {renameTarget && (
+        <RenameDialog
+          entry={renameTarget}
+          renaming={renameEntry.isPending}
+          onClose={() => setRenameTarget(null)}
+          onRename={(name) =>
+            renameEntry.mutate(
+              { entry: renameTarget, name },
+              { onSuccess: () => setRenameTarget(null) }
+            )
+          }
         />
       )}
 

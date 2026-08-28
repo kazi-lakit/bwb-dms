@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { Trash2 } from "lucide-react";
+import { FilePreviewDialog } from "@/components/drive/file-preview-dialog";
+import { FileVersionsDialog } from "@/components/drive/file-versions-dialog";
 import { FileGrid } from "@/components/drive/file-grid";
 import { Spinner } from "@/components/ui/spinner";
 import { filesApi, type DirectoryChild } from "@/lib/blocks/files";
@@ -17,6 +20,8 @@ export default function TrashPage() {
   const { data: page, isPending, isError } = useTrash();
   const restore = useRestoreFromTrash();
   const purge = useDeleteFromTrash();
+  const [previewTarget, setPreviewTarget] = useState<DirectoryChild | null>(null);
+  const [versionsTarget, setVersionsTarget] = useState<DirectoryChild | null>(null);
 
   const entries = page?.entries ?? [];
   const folders = entries.filter((e) => e.isFolder);
@@ -72,6 +77,8 @@ export default function TrashPage() {
                 entries={files}
                 onOpenFolder={() => {}}
                 onDownload={downloadEntry}
+                onPreview={setPreviewTarget}
+                onVersions={setVersionsTarget}
                 onRestore={(e) => restore.mutate(e.id)}
                 onPurge={purgeEntry}
               />
@@ -82,6 +89,14 @@ export default function TrashPage() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-24 text-center text-steel">
           <p className="text-sm">Trash is empty.</p>
         </div>
+      )}
+
+      {previewTarget && (
+        <FilePreviewDialog key={previewTarget.id} entry={previewTarget} onClose={() => setPreviewTarget(null)} />
+      )}
+
+      {versionsTarget && (
+        <FileVersionsDialog key={versionsTarget.id} entry={versionsTarget} onClose={() => setVersionsTarget(null)} />
       )}
     </div>
   );

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { Breadcrumbs, type Crumb } from "@/components/drive/breadcrumbs";
+import { FilePreviewDialog } from "@/components/drive/file-preview-dialog";
+import { FileVersionsDialog } from "@/components/drive/file-versions-dialog";
 import { FileGrid } from "@/components/drive/file-grid";
 import { Spinner } from "@/components/ui/spinner";
 import { filesApi, type DirectoryChild } from "@/lib/blocks/files";
@@ -17,6 +19,8 @@ import { useDirectoryChildren, useSharedContent } from "@/lib/blocks/drive-hooks
  */
 export default function SharedPage() {
   const [trail, setTrail] = useState<Crumb[]>([]);
+  const [previewTarget, setPreviewTarget] = useState<DirectoryChild | null>(null);
+  const [versionsTarget, setVersionsTarget] = useState<DirectoryChild | null>(null);
   const atRoot = trail.length === 0;
   const currentFolderId = trail.at(-1)?.id ?? "";
 
@@ -63,7 +67,13 @@ export default function SharedPage() {
           {files.length > 0 && (
             <section>
               <h2 className="px-6 pt-4 text-xs font-medium uppercase tracking-wide text-muted">Files</h2>
-              <FileGrid entries={files} onOpenFolder={openFolder} onDownload={downloadEntry} />
+              <FileGrid
+                entries={files}
+                onOpenFolder={openFolder}
+                onDownload={downloadEntry}
+                onPreview={setPreviewTarget}
+                onVersions={setVersionsTarget}
+              />
             </section>
           )}
         </div>
@@ -73,6 +83,14 @@ export default function SharedPage() {
             {atRoot ? "Nothing has been shared with you yet." : "This folder is empty."}
           </p>
         </div>
+      )}
+
+      {previewTarget && (
+        <FilePreviewDialog key={previewTarget.id} entry={previewTarget} onClose={() => setPreviewTarget(null)} />
+      )}
+
+      {versionsTarget && (
+        <FileVersionsDialog key={versionsTarget.id} entry={versionsTarget} onClose={() => setVersionsTarget(null)} />
       )}
     </div>
   );

@@ -10,7 +10,7 @@ import {
   type ContentPrincipalType,
   type ContentResourceType,
 } from "./access";
-import { directoryApi, filesApi, normalizeDirectoryChildren, type DirectoryChild } from "./files";
+import { directoryApi, filesApi, normalizeDirectoryChildren, normalizeFileVersions, type DirectoryChild } from "./files";
 import { rolesApi } from "./roles";
 import { usersApi } from "./users";
 
@@ -20,6 +20,15 @@ export function useDirectoryChildren(directoryId: string, search: string, enable
     queryFn: () => directoryApi.getChildren(directoryId, { search }).then(normalizeDirectoryChildren),
     enabled,
     placeholderData: (prev) => prev,
+  });
+}
+
+/** Newest-first version history for one file. */
+export function useFileVersions(fileId: string) {
+  return useQuery({
+    queryKey: ["file-versions", fileId],
+    queryFn: () => filesApi.getVersions(fileId).then(normalizeFileVersions),
+    enabled: Boolean(fileId),
   });
 }
 
@@ -35,7 +44,8 @@ export function useSharedContent(type?: ContentResourceType, enabled = true) {
 export function useUploadFile(directoryId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (file: File) => filesApi.upload(file, directoryId),
+    mutationFn: ({ file, metadata }: { file: File; metadata?: Record<string, string> }) =>
+      filesApi.upload(file, directoryId, metadata),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["directory", directoryId] }),
   });
 }
@@ -73,6 +83,16 @@ export function useMoveEntry(directoryId: string) {
       qc.invalidateQueries({ queryKey: ["directory", directoryId] });
       qc.invalidateQueries({ queryKey: ["directory", targetDirectoryId] });
     },
+  });
+}
+
+/** Renames a file or folder in place — doesn't move it, so only the current directory's listing needs to refresh. */
+export function useRenameEntry(directoryId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ entry, name }: { entry: DirectoryChild; name: string }) =>
+      entry.isFolder ? directoryApi.renameDirectory(entry.id, name) : filesApi.renameFile(entry.id, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["directory", directoryId] }),
   });
 }
 
