@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, useLocation } from "react-router-dom";
 import { Folder, Trash2, Users } from "lucide-react";
 import clsx from "clsx";
 
@@ -12,7 +11,7 @@ const NAV_ITEMS = [
 ];
 
 export function Sidebar() {
-  const pathname = usePathname();
+  const { pathname } = useLocation();
 
   return (
     <aside className="hidden w-60 flex-none flex-col border-r border-hairline bg-canvas px-3 py-5 md:flex">
@@ -37,7 +36,7 @@ export function Sidebar() {
           return (
             <Link
               key={item.href}
-              href={item.href}
+              to={item.href}
               className={clsx(
                 "flex items-center gap-2.5 rounded-sm px-3 py-2 text-sm",
                 active ? "bg-surface font-medium text-ink" : "text-steel hover:bg-surface"

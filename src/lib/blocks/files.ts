@@ -8,7 +8,7 @@ import { blocksFilesFetch } from "./http";
  * `/objects/*` for folder and file listings, and `/files/*` for file content.
  *
  * Storage calls run against a separate local instance of that service
- * (`NEXT_PUBLIC_BLOCKS_STORAGE_API_URL`, default `http://localhost:9000`), not the
+ * (`VITE_BLOCKS_STORAGE_API_URL`, default `http://localhost:9000`), not the
  * `blocksapi.dev.slsblx.com` gateway used for IAM — and that instance's base path is
  * `/api`, matching the swagger exactly (e.g. `/api/objects/get-objects`).
  * See `blocksFilesFetch` in `./http`.

@@ -11,8 +11,11 @@ import type { AccessPolicy, ContentPermission, ContentPrincipalType } from "@/li
 import type { DirectoryChild } from "@/lib/blocks/files";
 import type { BlocksRole } from "@/lib/blocks/roles";
 import type { BlocksUser } from "@/lib/blocks/users";
+import type { BlocksOrganization } from "@/lib/blocks/organizations";
+import { useDrive } from "@/components/providers/drive-provider";
 import {
   useAccessPolicies,
+  useMyOrganizations,
   useRevokeAccess,
   useRoles,
   useShareEntry,
@@ -50,104 +53,130 @@ function PermissionSelect({
 }
 
 /** Resolves a policy's principalId back to a human-readable name — the API only returns the id. */
-function describePrincipal(policy: AccessPolicy, users: BlocksUser[] | undefined, roles: BlocksRole[] | undefined) {
+function describePrincipal(
+  policy: AccessPolicy,
+  users: BlocksUser[] | undefined,
+  roles: BlocksRole[] | undefined,
+  organizations: BlocksOrganization[] | undefined
+) {
   if (policy.principalType === "User") {
     const user = users?.find((u) => u.itemId === policy.principalId);
     if (user) return { primary: `${user.firstName} ${user.lastName}`.trim() || user.email, secondary: user.email };
   }
   if (policy.principalType === "Role") {
     const role = roles?.find((r) => r.slug === policy.principalId);
-    if (role) return { primary: role.name, secondary: "Role" };
+    const organization = organizations?.find((item) => item.itemId === policy.organizationId);
+    if (role) return { primary: role.name, secondary: organization ? `Role in ${organization.name}` : "Role" };
+  }
+  if (policy.principalType === "Organization") {
+    return { primary: policy.principalName || "Organization", secondary: "Organization" };
   }
   return { primary: policy.principalName || policy.principalId, secondary: policy.principalType };
 }
 
 export function ShareDialog({ entry, onClose }: { entry: DirectoryChild; onClose: () => void }) {
+  const { organizationId } = useDrive();
   const resourceType = entry.isFolder ? "Directory" : "File";
   const { data: policies, isPending } = useAccessPolicies(entry.id);
   const { data: users, isPending: usersPending } = useUsers();
   const { data: roles, isPending: rolesPending } = useRoles();
+  const { data: organizations, isPending: organizationsPending } = useMyOrganizations();
   const share = useShareEntry(entry.id);
   const update = useUpdateAccess(entry.id);
   const revoke = useRevokeAccess(entry.id);
 
-  const [principalType, setPrincipalType] = useState<ContentPrincipalType>("User");
+  const [principalType, setPrincipalType] = useState<ContentPrincipalType | "OrganizationRole">("User");
   const [principalId, setPrincipalId] = useState(""); // itemId (User) or slug (Role)
+  const [roleOrganizationId, setRoleOrganizationId] = useState("");
   const [permission, setPermission] = useState<ContentPermission>("View");
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!principalId) return;
-    share.mutate({ resourceType, principalType, principalId, permission }, { onSuccess: () => setPrincipalId("") });
+    const organizationRole = principalType === "OrganizationRole";
+    if (!principalId || (organizationRole && !roleOrganizationId)) return;
+    share.mutate(
+      {
+        resourceType,
+        principalType: organizationRole ? "Role" : principalType,
+        principalId,
+        organizationId: organizationRole ? roleOrganizationId : undefined,
+        permission,
+      },
+      { onSuccess: () => { setPrincipalId(""); setRoleOrganizationId(""); } }
+    );
   }
 
   return (
     <Modal onClose={onClose} className="max-w-md">
       <h2 className="mb-1 text-lg font-semibold text-ink">Share &ldquo;{entry.name}&rdquo;</h2>
-      <p className="mb-4 text-sm text-steel">Give a user or role access to this {entry.isFolder ? "folder" : "file"}.</p>
+      <p className="mb-4 text-sm text-steel">Give a user, role, organization, or organization-scoped role access to this {entry.isFolder ? "folder" : "file"}.</p>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-3 border-b border-hairline pb-5">
-        <div className="flex gap-2">
-          {/* A plain <select> with only two short options ("User"/"Role") rendered
-              inconsistently across browsers even with appearance-none reset — a
-              two-way toggle sidesteps native <select> box-model quirks entirely. */}
-          <div className="flex h-10 shrink-0 rounded-md border border-hairline p-0.5">
-            {(["User", "Role"] as ContentPrincipalType[]).map((type) => (
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-1 rounded-md border border-hairline p-1 sm:grid-cols-4">
+            {(["User", "Role", "Organization", "OrganizationRole"] as const).map((type) => (
               <button
                 key={type}
                 type="button"
                 onClick={() => {
                   setPrincipalType(type);
-                  setPrincipalId("");
+                  // Default to the active organization, while still allowing any of the
+                  // user's organizations to be selected from the dropdown below.
+                  setPrincipalId(type === "Organization" ? organizationId ?? "" : "");
+                  setRoleOrganizationId(type === "OrganizationRole" ? organizationId ?? "" : "");
                 }}
                 className={clsx(
-                  "rounded-sm px-3 text-sm font-medium transition-colors",
+                  "h-9 rounded-sm px-2 text-sm font-medium transition-colors",
                   principalType === type ? "bg-primary text-on-primary" : "text-steel hover:bg-surface"
                 )}
               >
-                {type}
+                {type === "OrganizationRole" ? "Org role" : type}
               </button>
             ))}
           </div>
 
           {principalType === "User" ? (
-            <Select
-              value={principalId}
-              onChange={(e) => setPrincipalId(e.target.value)}
-              required
-              disabled={usersPending}
-            >
-              <option value="" disabled>
-                {usersPending ? "Loading users…" : "Select a user…"}
-              </option>
-              {users?.map((user) => (
-                <option key={user.itemId} value={user.itemId}>
-                  {`${user.firstName} ${user.lastName}`.trim() || user.email} ({user.email})
-                </option>
-              ))}
-            </Select>
+            <div className="min-w-0"><Select value={principalId} onChange={(e) => setPrincipalId(e.target.value)} required disabled={usersPending}>
+              <option value="" disabled>{usersPending ? "Loading users…" : "Select a user…"}</option>
+              {users?.map((user) => <option key={user.itemId} value={user.itemId}>{`${user.firstName} ${user.lastName}`.trim() || user.email} ({user.email})</option>)}
+            </Select></div>
+          ) : principalType === "Role" ? (
+            <div className="min-w-0"><Select value={principalId} onChange={(e) => setPrincipalId(e.target.value)} required disabled={rolesPending}>
+              <option value="" disabled>{rolesPending ? "Loading roles…" : "Select a role…"}</option>
+              {roles?.map((role) => <option key={role.itemId} value={role.slug}>{role.name}</option>)}
+            </Select></div>
+          ) : principalType === "Organization" ? (
+            <div className="min-w-0"><Select value={principalId} onChange={(e) => setPrincipalId(e.target.value)} required disabled={organizationsPending}>
+              <option value="" disabled>{organizationsPending ? "Loading organizations…" : "Select an organization…"}</option>
+              {organizations?.map((organization) => <option key={organization.itemId} value={organization.itemId}>{organization.name || "Unnamed organization"}</option>)}
+            </Select></div>
           ) : (
-            <Select
-              value={principalId}
-              onChange={(e) => setPrincipalId(e.target.value)}
-              required
-              disabled={rolesPending}
-            >
-              <option value="" disabled>
-                {rolesPending ? "Loading roles…" : "Select a role…"}
-              </option>
-              {roles?.map((role) => (
-                <option key={role.itemId} value={role.slug}>
-                  {role.name}
-                </option>
-              ))}
-            </Select>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="min-w-0"><Select
+                value={principalId}
+                onChange={(e) => setPrincipalId(e.target.value)}
+                required
+                disabled={rolesPending}
+              >
+                <option value="" disabled>{rolesPending ? "Loading roles…" : "Select a role…"}</option>
+                {roles?.map((role) => <option key={role.itemId} value={role.slug}>{role.name}</option>)}
+              </Select></div>
+              <div className="min-w-0"><Select
+                value={roleOrganizationId}
+                onChange={(e) => setRoleOrganizationId(e.target.value)}
+                required
+                disabled={organizationsPending}
+              >
+                <option value="" disabled>{organizationsPending ? "Loading organizations…" : "Select an organization…"}</option>
+                {organizations?.map((organization) => <option key={organization.itemId} value={organization.itemId}>{organization.name || "Unnamed organization"}</option>)}
+              </Select></div>
+            </div>
           )}
         </div>
 
         <div className="flex gap-2">
           <PermissionSelect value={permission} onChange={setPermission} className="flex-1" />
-          <Button type="submit" size="sm" className="shrink-0" disabled={share.isPending || !principalId}>
+          <Button type="submit" size="sm" className="shrink-0" disabled={share.isPending || !principalId || (principalType === "OrganizationRole" && !roleOrganizationId)}>
             {share.isPending ? <Spinner className="h-4 w-4" /> : <Users size={15} />}
             Share
           </Button>
@@ -163,7 +192,7 @@ export function ShareDialog({ entry, onClose }: { entry: DirectoryChild; onClose
             </div>
           ) : policies && policies.length > 0 ? (
             policies.map((policy) => {
-              const { primary, secondary } = describePrincipal(policy, users, roles);
+              const { primary, secondary } = describePrincipal(policy, users, roles, organizations);
               return (
                 <div key={policy.policyItemId} className="flex items-center gap-2 rounded-md px-1 py-2 hover:bg-surface">
                   <div className="min-w-0 flex-1">
@@ -180,6 +209,7 @@ export function ShareDialog({ entry, onClose }: { entry: DirectoryChild; onClose
                         resourceType,
                         principalType: policy.principalType,
                         principalId: policy.principalId,
+                        organizationId: policy.organizationId,
                         permission: perm,
                       })
                     }

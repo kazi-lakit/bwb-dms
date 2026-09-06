@@ -13,22 +13,27 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
     "paths": {
       "@/*": ["./src/*"]
     }
   },
   "include": [
-    "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "next.config.ts",
+    "src/app/api/**",
+    "src/app/layout.tsx",
+    "src/app/page.tsx",
+    "src/app/login/**",
+    "src/app/activate/**",
+    "src/app/(app)/layout.tsx",
+    "src/lib/blocks-oidc.ts",
+    "src/lib/auth-session.ts",
+    "src/lib/session.ts",
+    "src/lib/request-origin.ts"
+  ]
 }

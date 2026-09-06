@@ -10,6 +10,8 @@ export interface BlocksUser {
   permissions: string[];
   active: boolean;
   profileImageUrl?: string;
+  /** Active tenant context supplied by IAM for a multi-organization session. */
+  organizationId?: string;
 }
 
 export const usersApi = {

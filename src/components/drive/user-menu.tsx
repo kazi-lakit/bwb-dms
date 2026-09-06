@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/components/providers/auth-provider";
 
 function initials(firstName?: string, lastName?: string, email?: string) {
@@ -11,7 +11,7 @@ function initials(firstName?: string, lastName?: string, email?: string) {
 
 export function UserMenu() {
   const { user, logout } = useAuth();
-  const router = useRouter();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -46,7 +46,7 @@ export function UserMenu() {
             onClick={async () => {
               setOpen(false);
               await logout();
-              router.replace("/login");
+              navigate("/login", { replace: true });
             }}
             className="mt-1 w-full rounded-md px-3 py-2 text-left text-sm text-ink hover:bg-surface"
           >

@@ -26,6 +26,8 @@ export interface AccessPolicy {
   resourceType?: ContentResourceType;
   principalType: ContentPrincipalType;
   principalId: string;
+  /** Limits a Role policy to this organization; absent for global roles. */
+  organizationId?: string;
   principalName?: string;
   permission: ContentPermission;
   effect?: ContentEffect;
@@ -39,6 +41,7 @@ export const accessApi = {
     resourceType: ContentResourceType;
     principalType: ContentPrincipalType;
     principalId: string;
+    organizationId?: string;
     permission: ContentPermission;
     expiresAt?: string;
   }) => blocksFilesFetch<unknown>(`/objects/share-object`, { method: "POST", body: JSON.stringify(params) }),
@@ -50,6 +53,7 @@ export const accessApi = {
     resourceType: ContentResourceType;
     principalType: ContentPrincipalType;
     principalId: string;
+    organizationId?: string;
     permission: ContentPermission;
     effect?: ContentEffect;
     priority?: number;
@@ -156,6 +160,7 @@ export function normalizeAccessPolicies(raw: unknown): AccessPolicy[] {
       resourceType: row.resourceType as ContentResourceType | undefined,
       principalType: (row.principalType ?? "User") as ContentPrincipalType,
       principalId: (row.principalId ?? "") as string,
+      organizationId: row.organizationId as string | undefined,
       principalName: row.principalName as string | undefined,
       permission: (row.permission ?? "View") as ContentPermission,
       effect: row.effect as ContentEffect | undefined,

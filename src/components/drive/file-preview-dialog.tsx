@@ -79,7 +79,6 @@ export function FilePreviewDialog({ entry, onClose }: { entry: DirectoryChild; o
             <p className="text-sm">Couldn&apos;t load a preview.</p>
           </div>
         ) : isImage ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt={entry.name} className="max-h-[70vh] w-auto object-contain" />
         ) : isPdf ? (
           <iframe src={url} title={entry.name} className="h-[70vh] w-full" />

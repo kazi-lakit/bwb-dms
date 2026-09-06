@@ -10,6 +10,8 @@ type DriveStatus = "checking" | "needs-setup" | "ready" | "error";
 interface DriveContextValue {
   status: DriveStatus;
   driveId: string | null;
+  /** The tenant that owns this drive, used when sharing content with the whole organization. */
+  organizationId: string | null;
   error: string | null;
   /** Called once the user agrees to set up their drive — creates the root directory, then records it. */
   setupDrive: () => Promise<void>;
@@ -27,6 +29,7 @@ export function DriveProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [status, setStatus] = useState<DriveStatus>("checking");
   const [driveId, setDriveId] = useState<string | null>(null);
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const check = useCallback(async () => {
@@ -37,8 +40,10 @@ export function DriveProvider({ children }: { children: React.ReactNode }) {
       const existing = await drivesApi.findByUserId(user.itemId);
       if (existing) {
         setDriveId(existing.DriveId);
+        setOrganizationId(user.organizationId ?? existing.OrganizationId ?? null);
         setStatus("ready");
       } else {
+        setOrganizationId(null);
         setStatus("needs-setup");
       }
     } catch (err) {
@@ -67,6 +72,10 @@ export function DriveProvider({ children }: { children: React.ReactNode }) {
       await drivesApi.insert(user.itemId, displayName, newDriveId);
 
       setDriveId(newDriveId);
+      // The gateway assigns OrganizationId while creating the drive record. Re-read it
+      // so organization sharing is available immediately after first-time setup.
+      const savedDrive = await drivesApi.findByUserId(user.itemId).catch(() => null);
+      setOrganizationId(user.organizationId ?? savedDrive?.OrganizationId ?? null);
       setStatus("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't set up your drive.");
@@ -75,7 +84,9 @@ export function DriveProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   return (
-    <DriveContext.Provider value={{ status, driveId, error, setupDrive }}>{children}</DriveContext.Provider>
+    <DriveContext.Provider value={{ status, driveId, organizationId, error, setupDrive }}>
+      {children}
+    </DriveContext.Provider>
   );
 }
 

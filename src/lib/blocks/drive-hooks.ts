@@ -13,6 +13,7 @@ import {
 import { directoryApi, filesApi, normalizeDirectoryChildren, normalizeFileVersions, type DirectoryChild } from "./files";
 import { rolesApi } from "./roles";
 import { usersApi } from "./users";
+import { organizationsApi } from "./organizations";
 
 export function useDirectoryChildren(directoryId: string, search: string, enabled = true) {
   return useQuery({
@@ -122,6 +123,15 @@ export function useUsers() {
   return useQuery({ queryKey: ["users"], queryFn: () => usersApi.list(), staleTime: 60_000 });
 }
 
+/** Organizations the signed-in user may switch their active session to. */
+export function useMyOrganizations() {
+  return useQuery({
+    queryKey: ["my-organizations"],
+    queryFn: () => organizationsApi.my(),
+    staleTime: 60_000,
+  });
+}
+
 export function useShareEntry(resourceId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -129,6 +139,7 @@ export function useShareEntry(resourceId: string) {
       resourceType: "Directory" | "File";
       principalType: ContentPrincipalType;
       principalId: string;
+      organizationId?: string;
       permission: ContentPermission;
     }) => accessApi.share({ resourceId, ...params }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["access", resourceId] }),
@@ -143,6 +154,7 @@ export function useUpdateAccess(resourceId: string) {
       resourceType: "Directory" | "File";
       principalType: ContentPrincipalType;
       principalId: string;
+      organizationId?: string;
       permission: ContentPermission;
     }) => accessApi.update({ resourceId, ...params }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["access", resourceId] }),

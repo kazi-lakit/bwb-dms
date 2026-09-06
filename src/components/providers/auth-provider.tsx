@@ -1,15 +1,16 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { onAccessTokenChange, setAccessToken } from "@/lib/blocks/token-store";
 import { usersApi, type BlocksUser } from "@/lib/blocks/users";
+import { blocksClient } from "@/lib/blocks/client";
+import { endSession, SESSION_EXPIRED_EVENT } from "@/lib/blocks/auth";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
 interface AuthContextValue {
   status: AuthStatus;
   user: BlocksUser | null;
-  /** Re-runs the session bootstrap — call after activation or when you suspect the token went stale. */
+  /** Re-validates the cookie-backed IAM session. */
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -27,56 +28,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const bootstrap = useCallback(async () => {
     setStatus("loading");
     try {
-      const res = await fetch("/api/auth/session");
-      if (!res.ok) {
-        setAccessToken(null);
-        setUser(null);
-        setStatus("unauthenticated");
-        return;
-      }
-      const data = (await res.json()) as { accessToken: string };
-      setAccessToken(data.accessToken);
+      if (!(await blocksClient.auth.isAuthenticated())) throw new Error("Unauthenticated");
       const me = await usersApi.me();
       setUser(me);
       setStatus("authenticated");
     } catch {
-      setAccessToken(null);
       setUser(null);
       setStatus("unauthenticated");
     }
   }, []);
 
   useEffect(() => {
-    // Intentional: bootstrap the session once on mount by calling the Next.js backend.
-    // This is the documented Next.js session-bootstrap pattern (fetch, then setState in
-    // the async continuation) — there's no external subscription to attach here instead.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     bootstrap();
   }, [bootstrap]);
 
   useEffect(() => {
-    // blocksFetch/blocksFilesFetch (src/lib/blocks/http.ts) transparently refresh the
-    // access token on a 401 and retry — the user never sees that. This only fires when
-    // that refresh itself fails (the Blocks refresh token is expired/revoked), which is
-    // the one case that's actually "logged out": drop to unauthenticated so the (app)
-    // layout's guard redirects to /login, instead of leaving the UI on broken queries.
-    return onAccessTokenChange((token) => {
-      if (token === null && statusRef.current === "authenticated") {
+    const onExpired = () => {
+      if (statusRef.current === "authenticated") {
         setUser(null);
         setStatus("unauthenticated");
       }
-    });
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
 
   const logout = useCallback(async () => {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    setAccessToken(null);
+    await endSession().catch(() => {});
     setUser(null);
     setStatus("unauthenticated");
   }, []);
 
   return (
-    <AuthContext.Provider value={{ status, user, refresh: bootstrap, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ status, user, refresh: bootstrap, logout }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 
