@@ -8,6 +8,10 @@
     "dev:https": "vite --host",
     "cert": "node scripts/generate-cert.mjs",
     "build": "tsc -b && vite build",
+    "build:dev": "BUILD_ENV=dev npm run set-env && tsc -b && vite build",
+    "build:stg": "BUILD_ENV=stg npm run set-env && tsc -b && vite build",
+    "build:prod": "BUILD_ENV=prod npm run set-env && tsc -b && vite build",
+    "set-env": "node set-env.cjs",
     "preview": "vite preview",
     "lint": "eslint ."
   },
