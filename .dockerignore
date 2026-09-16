@@ -1,0 +1,22 @@
+.git
+node_modules
+dist
+build
+.next
+out
+coverage
+.vscode
+.cursor
+.idea
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+.cert
+tsconfig.tsbuildinfo
+
+# NOTE: .env.dev / .env.example are deliberately NOT excluded — set-env.cjs
+# (run inside the builder stage via `npm run build:${ci_build}`) copies
+# `.env.${ci_build}` over `.env` before `vite build`, so a fresh checkout
+# must ship those files in the build context.

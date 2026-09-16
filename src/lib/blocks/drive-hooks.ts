@@ -10,10 +10,18 @@ import {
   type ContentPrincipalType,
   type ContentResourceType,
 } from "./access";
-import { directoryApi, filesApi, normalizeDirectoryChildren, normalizeFileVersions, type DirectoryChild } from "./files";
+import {
+  directoryApi,
+  filesApi,
+  normalizeDirectoryChildren,
+  normalizeFileVersions,
+  type DirectoryChild,
+  type ObjectAccessLevel,
+} from "./files";
 import { rolesApi } from "./roles";
 import { usersApi } from "./users";
 import { organizationsApi } from "./organizations";
+import { toast } from "@/lib/toast-store";
 
 export function useDirectoryChildren(directoryId: string, search: string, enabled = true) {
   return useQuery({
@@ -42,19 +50,33 @@ export function useSharedContent(type?: ContentResourceType, enabled = true) {
   });
 }
 
+// Upload rejection (Storage Security Phase 1 verification, see files.ts's UploadRejectedError)
+// and any other in-browser upload failure (presign/PUT) never touch blocksFilesFetch's own
+// business-error toast, so it's surfaced here instead.
 export function useUploadFile(directoryId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, metadata }: { file: File; metadata?: Record<string, string> }) =>
-      filesApi.upload(file, directoryId, metadata),
+    mutationFn: ({
+      file,
+      metadata,
+      accessModifier,
+      objectAccessLevel,
+    }: {
+      file: File;
+      metadata?: Record<string, string>;
+      accessModifier?: "Public" | "Private";
+      objectAccessLevel?: ObjectAccessLevel;
+    }) => filesApi.upload(file, directoryId, metadata, { accessModifier, objectAccessLevel }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["directory", directoryId] }),
+    onError: (error: Error) => toast.error(error.message || "Upload failed."),
   });
 }
 
 export function useCreateDirectory(directoryId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => directoryApi.createDirectory(name, directoryId),
+    mutationFn: ({ name, objectAccessLevel }: { name: string; objectAccessLevel?: ObjectAccessLevel }) =>
+      directoryApi.createDirectory(name, directoryId, objectAccessLevel),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["directory", directoryId] }),
   });
 }

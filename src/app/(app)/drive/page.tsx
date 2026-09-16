@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { FolderPlus, Search, Upload as UploadIcon } from "lucide-react";
 import { Breadcrumbs, type Crumb } from "@/components/drive/breadcrumbs";
 import { DestinationPickerDialog } from "@/components/drive/destination-picker-dialog";
@@ -11,9 +11,11 @@ import { NewFolderDialog } from "@/components/drive/new-folder-dialog";
 import { RenameDialog } from "@/components/drive/rename-dialog";
 import { ShareDialog } from "@/components/drive/share-dialog";
 import { UploadDropzone } from "@/components/drive/upload-dropzone";
+import { UploadOptionsDialog } from "@/components/drive/upload-options-dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { fileIntrinsicMetadata, filesApi, type DirectoryChild } from "@/lib/blocks/files";
+import { fileIntrinsicMetadata, filesApi, unreadableFileMessage, type DirectoryChild } from "@/lib/blocks/files";
+import { toast } from "@/lib/toast-store";
 import {
   useCopyFile,
   useCreateDirectory,
@@ -35,7 +37,10 @@ export default function DrivePage() {
   const [previewTarget, setPreviewTarget] = useState<DirectoryChild | null>(null);
   const [versionsTarget, setVersionsTarget] = useState<DirectoryChild | null>(null);
   const [transferTarget, setTransferTarget] = useState<{ entry: DirectoryChild; mode: "move" | "copy" } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // null hides the dialog; a (possibly empty) array shows it — empty when opened from the
+  // Upload button (file picking happens inside the dialog), pre-populated when opened by
+  // dropping files on the page.
+  const [uploadDialogFiles, setUploadDialogFiles] = useState<File[] | null>(null);
 
   // Empty trail means "at the drive root" — that's the user's own drive directory
   // (driveId), never the raw storage root. AppLayout only renders this page once
@@ -64,10 +69,19 @@ export default function DrivePage() {
   async function downloadEntry(entry: DirectoryChild) {
     const file = await filesApi.get(entry.id);
     if (file.url) window.open(file.url, "_blank", "noopener,noreferrer");
+    else toast.error(unreadableFileMessage(file) ?? "Couldn't download this file.");
   }
 
   function uploadFiles(files: File[]) {
-    files.forEach((file) => upload.mutate({ file, metadata: fileIntrinsicMetadata(file) }));
+    if (files.length) setUploadDialogFiles(files);
+  }
+
+  function confirmUpload(
+    files: File[],
+    options: { objectAccessLevel: "Creator" | "Organization"; accessModifier: "Public" | "Private" }
+  ) {
+    files.forEach((file) => upload.mutate({ file, metadata: fileIntrinsicMetadata(file), ...options }));
+    setUploadDialogFiles(null);
   }
 
   return (
@@ -88,23 +102,9 @@ export default function DrivePage() {
             <Button variant="secondary" size="sm" onClick={() => setShowNewFolder(true)}>
               <FolderPlus size={15} /> New folder
             </Button>
-            <Button
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={upload.isPending}
-            >
+            <Button size="sm" onClick={() => setUploadDialogFiles([])} disabled={upload.isPending}>
               <UploadIcon size={15} /> {upload.isPending ? "Uploading…" : "Upload"}
             </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files) uploadFiles(Array.from(e.target.files));
-                e.target.value = "";
-              }}
-            />
           </div>
         </div>
       </div>
@@ -158,11 +158,21 @@ export default function DrivePage() {
         <NewFolderDialog
           creating={createDirectory.isPending}
           onClose={() => setShowNewFolder(false)}
-          onCreate={(name) =>
-            createDirectory.mutate(name, {
-              onSuccess: () => setShowNewFolder(false),
-            })
+          onCreate={(name, objectAccessLevel) =>
+            createDirectory.mutate(
+              { name, objectAccessLevel },
+              { onSuccess: () => setShowNewFolder(false) }
+            )
           }
+        />
+      )}
+
+      {uploadDialogFiles && (
+        <UploadOptionsDialog
+          initialFiles={uploadDialogFiles}
+          uploading={upload.isPending}
+          onClose={() => setUploadDialogFiles(null)}
+          onConfirm={confirmUpload}
         />
       )}
 

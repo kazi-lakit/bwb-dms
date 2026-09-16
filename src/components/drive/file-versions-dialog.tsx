@@ -5,9 +5,10 @@ import { Download, History, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { filesApi, type DirectoryChild, type FileVersion } from "@/lib/blocks/files";
+import { filesApi, unreadableFileMessage, type DirectoryChild, type FileVersion } from "@/lib/blocks/files";
 import { useFileVersions } from "@/lib/blocks/drive-hooks";
 import { formatBytes, formatDate } from "@/lib/format";
+import { toast } from "@/lib/toast-store";
 
 function VersionRow({ fileId, version, isCurrent }: { fileId: string; version: FileVersion; isCurrent: boolean }) {
   const [downloading, setDownloading] = useState(false);
@@ -17,6 +18,7 @@ function VersionRow({ fileId, version, isCurrent }: { fileId: string; version: F
     try {
       const file = await filesApi.get(fileId, "Default", isCurrent ? undefined : version.no);
       if (file.url) window.open(file.url, "_blank", "noopener,noreferrer");
+      else toast.error(unreadableFileMessage(file) ?? "Couldn't download this version.");
     } finally {
       setDownloading(false);
     }

@@ -14,10 +14,76 @@ import { blocksFilesFetch } from "./http";
  * See `blocksFilesFetch` in `./http`.
  */
 
+// Storage Security Phase 1 — see LEGACY_APP_STORAGE_COMPATIBILITY.md §6/§7. `null` and
+// `"Unverified"` both mean "readable, no completion step involved" (pre-Phase-1 behavior);
+// `"Quarantined"` and `"Rejected"` mean the object is intentionally unreadable (`url` empty).
+export type VerificationStatus = "Unverified" | "Quarantined" | "Verified" | "Rejected";
+
+// §3.2 — orthogonal to AccessModifier: who besides the creator can see/edit an item by
+// default, before any explicit share. Accepted on CreateDirectoryRequest and
+// GetPreSignedUrlForUploadRequest; sent as the literal string, case-insensitive.
+export type ObjectAccessLevel = "Creator" | "Organization";
+
+// Keys match DomainService.Storage's UploadRejectionReason — see the table in
+// LEGACY_APP_STORAGE_COMPATIBILITY.md §6. Anything not in this map falls back to a generic
+// message rather than surfacing the raw code to the user.
+export const REJECTION_REASON_MESSAGES: Record<string, string> = {
+  quarantine_key_missing: "This upload couldn't be verified due to a server-side issue. Please try again.",
+  quarantine_object_not_found: "The upload didn't finish reaching storage. Please try again.",
+  candidate_object_not_found: "This upload couldn't be verified due to a server-side issue. Please try again.",
+  actual_size_does_not_match_declared_size: "The uploaded file didn't match its expected size. Please try again.",
+  actual_size_exceeds_maximum_allowed: "This file is larger than the maximum allowed size.",
+  stored_content_type_does_not_match_declared_content_type: "The uploaded file's type didn't match what was declared. Please try again.",
+  real_file_type_does_not_match_extension: "This file's contents don't match its extension and were rejected for safety.",
+  checksum_mismatch: "The uploaded file didn't match its checksum and may be corrupted. Please try again.",
+};
+
+export function rejectionMessage(reason?: string | null): string {
+  return (reason && REJECTION_REASON_MESSAGES[reason]) || "This upload was rejected during verification. Please try again.";
+}
+
+/**
+ * §7 read-gating: `url` empty + `verificationStatus` "Quarantined"/"Rejected" means the file
+ * exists but is intentionally unreadable — not a missing-file error. Returns null when the
+ * file is actually readable (or its unreadability isn't explained by verification status, in
+ * which case callers should fall back to a generic error).
+ */
+export function unreadableFileMessage(file: Pick<FileRecord, "url" | "verificationStatus">): string | null {
+  if (file.url) return null;
+  if (file.verificationStatus === "Quarantined") return "This file is still being verified and isn't available yet.";
+  if (file.verificationStatus === "Rejected") return "This file failed verification and can't be downloaded.";
+  return null;
+}
+
+/** Thrown by `filesApi.upload` when the server verifies and rejects the upload (§6, Step 3). */
+export class UploadRejectedError extends Error {
+  reason?: string | null;
+  constructor(reason?: string | null) {
+    super(rejectionMessage(reason));
+    this.reason = reason;
+  }
+}
+
 export interface PresignResponse {
   isSuccess?: boolean;
   uploadUrl?: string;
   fileId?: string;
+  // New in Phase 1 — additive, all optional so a pre-Phase-1 response still parses fine.
+  fileVersionId?: string;
+  uploadSessionId?: string;
+  uploadUrlExpiresAtUtc?: string;
+  /** Provider-specific headers (e.g. `x-ms-blob-type`) to merge into the PUT — see §1C/§6. */
+  requiredHeaders?: Record<string, string>;
+  uploadCompletionRequired?: boolean;
+  verificationStatus?: VerificationStatus;
+}
+
+export interface CompleteUploadResponse {
+  isSuccess?: boolean;
+  fileId?: string;
+  fileVersionId?: string;
+  verificationStatus?: VerificationStatus;
+  rejectionReason?: string | null;
 }
 
 // DomainService.Storage.FileMetaDataResponse — one metadata entry as it comes back from
@@ -41,6 +107,11 @@ export interface FileRecord {
   accessModifier?: "Public" | "Private";
   tags?: string[];
   metaData?: Record<string, FileMetaDataEntry>;
+  // New in Phase 1 (§7). `url` is empty exactly when verificationStatus is "Quarantined" or
+  // "Rejected" — that's the read-gating policy, not a missing-file error.
+  verificationStatus?: VerificationStatus | null;
+  downloadUrlExpiresAtUtc?: string | null;
+  objectAccessLevel?: ObjectAccessLevel | null;
 }
 
 /**
@@ -109,7 +180,8 @@ interface FileVersionsPage {
   hasMore: boolean;
 }
 
-function providerHeaders(uploadUrl: string, contentType: string): Record<string, string> {
+/** Fallback only — used when the server doesn't send `requiredHeaders` (pre-Phase-1 response). */
+function fallbackProviderHeaders(uploadUrl: string, contentType: string): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": contentType || "application/octet-stream" };
   if (/\.blob\.core\.windows\.net/i.test(uploadUrl)) {
     headers["x-ms-blob-type"] = "BlockBlob";
@@ -117,38 +189,109 @@ function providerHeaders(uploadUrl: string, contentType: string): Record<string,
   return headers;
 }
 
+/**
+ * Best-effort client-side checksum (§1C.3) — `crypto.subtle` needs a secure context
+ * (HTTPS/localhost), so this silently returns undefined rather than fail the upload when
+ * unavailable; the server doesn't require a checksum.
+ */
+async function computeChecksum(file: File): Promise<{ checksum: string; checksumAlgorithm: "SHA256" } | undefined> {
+  try {
+    if (!crypto.subtle) return undefined;
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    const checksum = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return { checksum, checksumAlgorithm: "SHA256" };
+  } catch {
+    return undefined;
+  }
+}
+
 export const filesApi = {
   // POST /files/get-pre-signed-url-for-upload — DomainService.Storage.GetPreSignedUrlForUploadRequest
   presign: (
     name: string,
     parentDirectoryId = "",
-    accessModifier: "Public" | "Private" = "Private",
-    metadata?: Record<string, string>
+    options: {
+      accessModifier?: "Public" | "Private";
+      // §3.2 — omit entirely to leave the legacy allow-all default untouched.
+      objectAccessLevel?: ObjectAccessLevel;
+      metadata?: Record<string, string>;
+      // New in Phase 1 (§6, Step 1) — sizeInBytes/contentType feed upload verification;
+      // checksum/checksumAlgorithm are optional and only checked if supplied.
+      sizeInBytes?: number;
+      contentType?: string;
+      checksum?: string;
+      checksumAlgorithm?: "MD5" | "SHA1" | "SHA256";
+    } = {}
   ) =>
     blocksFilesFetch<PresignResponse>(`/files/get-pre-signed-url-for-upload`, {
       method: "POST",
       body: JSON.stringify({
         name,
         parentDirectoryId,
-        accessModifier,
+        accessModifier: options.accessModifier ?? "Private",
         configurationName: "Default",
         moduleName: 3,
         tags: "",
-        metaData: buildMetaDataPayload(metadata),
+        metaData: buildMetaDataPayload(options.metadata),
+        ...(options.objectAccessLevel ? { objectAccessLevel: options.objectAccessLevel } : {}),
+        ...(options.sizeInBytes !== undefined ? { sizeInBytes: options.sizeInBytes } : {}),
+        ...(options.contentType ? { contentType: options.contentType } : {}),
+        ...(options.checksum ? { checksum: options.checksum } : {}),
+        ...(options.checksumAlgorithm ? { checksumAlgorithm: options.checksumAlgorithm } : {}),
       }),
     }),
 
-  /** Presign, then PUT the raw bytes straight to storage. No application-server upload step. */
-  upload: async (file: File, parentDirectoryId = "", metadata?: Record<string, string>): Promise<FileRecord> => {
-    const { uploadUrl, fileId } = await filesApi.presign(file.name, parentDirectoryId, "Private", metadata);
+  // POST /files/complete-upload — DomainService.Storage.CompleteUploadRequest. Only needs
+  // calling when presign's response said `uploadCompletionRequired: true` (§6, Step 3).
+  // Idempotent — safe to retry on a network timeout.
+  completeUpload: (fileId: string, fileVersionId: string) =>
+    blocksFilesFetch<CompleteUploadResponse>(`/files/complete-upload`, {
+      method: "POST",
+      body: JSON.stringify({ fileId, fileVersionId }),
+    }),
+
+  /**
+   * Presign, PUT the raw bytes straight to storage, then — only if the storage
+   * configuration requires it for this upload's AccessModifier — complete the upload and
+   * verify the result. Throws `UploadRejectedError` if verification rejects it (§6).
+   */
+  upload: async (
+    file: File,
+    parentDirectoryId = "",
+    metadata?: Record<string, string>,
+    options: { accessModifier?: "Public" | "Private"; objectAccessLevel?: ObjectAccessLevel } = {}
+  ): Promise<FileRecord> => {
+    const contentType = file.type || "application/octet-stream";
+    const checksumInfo = await computeChecksum(file);
+    const presigned = await filesApi.presign(file.name, parentDirectoryId, {
+      accessModifier: options.accessModifier ?? "Private",
+      objectAccessLevel: options.objectAccessLevel,
+      metadata,
+      sizeInBytes: file.size,
+      contentType,
+      ...checksumInfo,
+    });
+    const { uploadUrl, fileId } = presigned;
     if (!uploadUrl || !fileId) throw new Error("Presign failed — no uploadUrl/fileId returned");
 
     const put = await fetch(uploadUrl, {
       method: "PUT",
-      headers: providerHeaders(uploadUrl, file.type),
+      headers: presigned.requiredHeaders
+        ? { "Content-Type": contentType, ...presigned.requiredHeaders }
+        : fallbackProviderHeaders(uploadUrl, contentType),
       body: file,
     });
     if (!put.ok) throw new Error(`Storage upload failed: ${put.status}`);
+
+    if (presigned.uploadCompletionRequired) {
+      if (!presigned.fileVersionId) throw new Error("Upload completion required but no fileVersionId was returned");
+      const completion = await filesApi.completeUpload(fileId, presigned.fileVersionId);
+      if (completion.verificationStatus === "Rejected") {
+        throw new UploadRejectedError(completion.rejectionReason);
+      }
+    }
 
     return filesApi.get(fileId);
   },
@@ -229,13 +372,14 @@ export const directoryApi = {
   },
 
   // POST /directory/create-directory — DomainService.Storage.Dms.CreateDirectoryRequest
-  createDirectory: (name: string, parentDirectoryId = "") =>
+  createDirectory: (name: string, parentDirectoryId = "", objectAccessLevel?: ObjectAccessLevel) =>
     blocksFilesFetch<{ isSuccess?: boolean; errors?: unknown }>(`/directory/create-directory`, {
       method: "POST",
       body: JSON.stringify({
         name,
         ...(parentDirectoryId ? { parentDirectoryId } : { moduleName: ROOT_MODULE_NAME }),
         configurationName: "Default",
+        ...(objectAccessLevel ? { objectAccessLevel } : {}),
       }),
     }),
 

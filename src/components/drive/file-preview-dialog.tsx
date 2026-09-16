@@ -6,7 +6,7 @@ import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { EntryIcon } from "./file-icon";
-import { filesApi, type DirectoryChild, type FileRecord } from "@/lib/blocks/files";
+import { filesApi, unreadableFileMessage, type DirectoryChild, type FileRecord } from "@/lib/blocks/files";
 import { formatBytes, formatDate } from "@/lib/format";
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"]);
@@ -30,8 +30,7 @@ export function FilePreviewDialog({ entry, onClose }: { entry: DirectoryChild; o
       .get(entry.id)
       .then((result) => {
         if (cancelled) return;
-        if (result.url) setFile(result);
-        else setFailed(true);
+        setFile(result);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -49,6 +48,9 @@ export function FilePreviewDialog({ entry, onClose }: { entry: DirectoryChild; o
   const isAudio = AUDIO_EXTS.has(ext);
   const isPdf = ext === "pdf";
   const loading = !file && !failed;
+  // Storage Security Phase 1 read-gating (§7): `url` empty + verificationStatus
+  // Quarantined/Rejected is intentional, not the generic failure `failed` represents.
+  const unreadableMessage = !failed && file ? unreadableFileMessage(file) : null;
 
   return (
     <Modal onClose={onClose} className="max-w-3xl">
@@ -74,9 +76,9 @@ export function FilePreviewDialog({ entry, onClose }: { entry: DirectoryChild; o
         {loading ? (
           <Spinner className="h-6 w-6" />
         ) : failed || !url ? (
-          <div className="flex flex-col items-center gap-2 py-16 text-steel">
+          <div className="flex flex-col items-center gap-2 px-6 py-16 text-center text-steel">
             <EntryIcon isFolder={false} name={entry.name} className="h-10 w-10" />
-            <p className="text-sm">Couldn&apos;t load a preview.</p>
+            <p className="text-sm">{unreadableMessage ?? "Couldn't load a preview."}</p>
           </div>
         ) : isImage ? (
           <img src={url} alt={entry.name} className="max-h-[70vh] w-auto object-contain" />
@@ -129,6 +131,14 @@ export function FilePreviewDialog({ entry, onClose }: { entry: DirectoryChild; o
             <div className="flex items-baseline gap-2 text-sm">
               <dt className="w-24 shrink-0 text-muted">Access</dt>
               <dd className="truncate text-ink">{file.accessModifier}</dd>
+            </div>
+          )}
+          {(file.verificationStatus === "Quarantined" || file.verificationStatus === "Rejected") && (
+            <div className="flex items-baseline gap-2 text-sm">
+              <dt className="w-24 shrink-0 text-muted">Verification</dt>
+              <dd className={file.verificationStatus === "Rejected" ? "truncate text-brand-error" : "truncate text-ink"}>
+                {file.verificationStatus}
+              </dd>
             </div>
           )}
           {file.tags && file.tags.length > 0 && (

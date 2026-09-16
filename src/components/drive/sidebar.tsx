@@ -1,12 +1,13 @@
 "use client";
 
 import { Link, useLocation } from "react-router-dom";
-import { Folder, Trash2, Users } from "lucide-react";
+import { Database, Folder, Trash2, Users } from "lucide-react";
 import clsx from "clsx";
 
 const NAV_ITEMS = [
   { label: "My files", href: "/drive", icon: Folder },
   { label: "Shared with me", href: "/shared", icon: Users },
+  { label: "System files", href: "/system-files", icon: Database },
   { label: "Trash", href: "/trash", icon: Trash2 },
 ];
 
