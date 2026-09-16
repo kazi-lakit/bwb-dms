@@ -13,6 +13,7 @@ import AuthCallbackPage from "@/pages/AuthCallbackPage";
 import ActivatePage from "@/pages/ActivatePage";
 import DrivePage from "@/app/(app)/drive/page";
 import SharedPage from "@/app/(app)/shared/page";
+import SystemFilesPage from "@/app/(app)/system-files/page";
 import TrashPage from "@/app/(app)/trash/page";
 
 function Loading() {
@@ -62,6 +63,7 @@ export default function App() {
           <Route element={<ProtectedLayout />}>
             <Route path="/drive" element={<DrivePage />} />
             <Route path="/shared" element={<SharedPage />} />
+            <Route path="/system-files" element={<SystemFilesPage />} />
             <Route path="/trash" element={<TrashPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

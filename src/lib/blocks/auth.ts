@@ -16,18 +16,60 @@ export async function completeLogin(callbackUrl: string) {
   return { ok: true, returnTo };
 }
 
-/** Retry once for a transient cookie propagation failure, then report an expired session. */
+/**
+ * Refreshes the cookie-backed IAM session via the OIDC token endpoint. The hosted IdP flow
+ * (`startLogin`/`completeLogin` above) has IAM set both the access and refresh token as
+ * Secure, httpOnly cookies — this app never sees either token string, matching AGENTS.md's
+ * "do not persist Blocks tokens in browser storage." `credentials: "include"` (baked into
+ * every SDK request) sends the existing httpOnly refresh-token cookie to IAM; on success IAM
+ * replaces the httpOnly access-token cookie via `Set-Cookie` on the response, so nothing here
+ * needs to read or store the new token either. Resolves `false` — without throwing — if the
+ * refresh token is itself missing, expired, or revoked; that's the caller's cue to log out
+ * rather than retry.
+ *
+ * `refreshInFlight` dedupes concurrent 401s (e.g. several requests racing on an expired
+ * access token) behind a single refresh call instead of one per caller.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = blocksClient.auth.oidc
+      .refreshToken()
+      .then((response) => !response.error && Boolean(response.access_token ?? response.accessToken))
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+function is401(error: unknown): boolean {
+  return error instanceof Error && "status" in error && (error as { status?: number }).status === 401;
+}
+
+/**
+ * Wraps a Blocks API call so an expired access token is recovered transparently: on a 401,
+ * mint a new access token from the refresh token (`refreshSession` above) and retry the call
+ * once. If the refresh token has also expired/is invalid, or the retried call still 401s, the
+ * session is unrecoverable — dispatch `SESSION_EXPIRED_EVENT` so `AuthProvider` logs the user
+ * out (see its listener), and surface the original error to the caller.
+ */
 export async function withSessionRefresh<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    if (!(error instanceof Error && "status" in error && error.status === 401)) throw error;
+    if (!is401(error)) throw error;
+
+    if (!(await refreshSession())) {
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+      throw error;
+    }
+
     try {
       return await fn();
     } catch (retryError) {
-      if (retryError instanceof Error && "status" in retryError && retryError.status === 401) {
-        window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
-      }
+      if (is401(retryError)) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
       throw retryError;
     }
   }

@@ -6,8 +6,9 @@ import { FilePreviewDialog } from "@/components/drive/file-preview-dialog";
 import { FileVersionsDialog } from "@/components/drive/file-versions-dialog";
 import { FileGrid } from "@/components/drive/file-grid";
 import { Spinner } from "@/components/ui/spinner";
-import { filesApi, type DirectoryChild } from "@/lib/blocks/files";
+import { filesApi, unreadableFileMessage, type DirectoryChild } from "@/lib/blocks/files";
 import { useDirectoryChildren, useSharedContent } from "@/lib/blocks/drive-hooks";
+import { toast } from "@/lib/toast-store";
 
 /**
  * Content shared with the signed-in user — GET /objects/get-shared-objects. That endpoint
@@ -42,6 +43,7 @@ export default function SharedPage() {
   async function downloadEntry(entry: DirectoryChild) {
     const file = await filesApi.get(entry.id);
     if (file.url) window.open(file.url, "_blank", "noopener,noreferrer");
+    else toast.error(unreadableFileMessage(file) ?? "Couldn't download this file.");
   }
 
   return (
